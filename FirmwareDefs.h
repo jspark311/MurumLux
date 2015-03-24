@@ -12,16 +12,6 @@ This is one of the files that the application author is required to provide. Thi
 #ifndef __FIRMWARE_DEFS_H
 #define __FIRMWARE_DEFS_H
 
-/*
-* Macros we will use in scattered places...
-*/
-#ifndef max
-    #define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
-#endif
-
-#ifndef min
-    #define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
-#endif
 
 /*
 * These are required fields.
@@ -39,8 +29,20 @@ This is one of the files that the application author is required to provide. Thi
 
 
 
-/* Codes that are specific to the testbench */
+/* Codes that are specific to MurumLux */
+  #define MURUM_LUX_WHEEL_CLOCKWISE            0x9100 // 
+  #define MURUM_LUX_WHEEL_COUNTER_CLOCKWISE    0x9101 // 
+  #define MURUM_LUX_GESTURE_0                  0x9102 // 
+  #define MURUM_LUX_GESTURE_1                  0x9103 // 
+  #define MURUM_LUX_GESTURE_2                  0x9104 // 
+  #define MURUM_LUX_GESTURE_3                  0x9105 // 
+  #define MURUM_LUX_GESTURE_APPROACH           0x9106 // 
+  #define MURUM_LUX_TAP                        0x9107 // 
+  #define MURUM_LUX_DOUBLE_TAP                 0x9108 // 
 
+  /* Note: intentional conflict with ViamSonus. */
+  #define MURUM_LUX_MSG_AMBIENT_LIGHT_LEVEL    0x9030 // 
+  #define MURUM_LUX_MSG_ADC_SCAN               0x9040 // 
 
 
 

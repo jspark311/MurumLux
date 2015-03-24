@@ -7,6 +7,8 @@
 // BSD license, all text above must be included in any redistribution.
 
 #include <ManuvrOS.h>
+#include "StaticHub.h"
+#include <Arduino.h>
 
 //#include <Adafruit_GFX.h>   // Core graphics library
 //#include <RGBmatrixPanel.h> // Hardware-specific library
