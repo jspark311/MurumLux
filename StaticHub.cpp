@@ -24,6 +24,8 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "StaticHub.h"
+#include "StringBuilder/StringBuilder.h"
+
 #include "ManuvrOS/Drivers/i2c-adapter/i2c-adapter.h"
 #include <ManuvrOS/EventManager.h>
 #include "Drivers/LightSensor/LightSensor.h"
@@ -31,6 +33,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include <sys/time.h>
 #include <unistd.h>
+
 
 #include "Arduino.h"
 
@@ -89,6 +92,8 @@ volatile uint32_t StaticHub::next_random_int[STATICHUB_RNG_CARRY_CAPACITY];
 volatile uint32_t StaticHub::millis_since_reset = 1;   // Start at one because WWDG.
 volatile uint8_t  StaticHub::watchdog_mark = 42;
 
+StringBuilder StaticHub::log_buffer;
+
 
 /****************************************************************************************************
 * Functions that convert from #define codes to something readable by a human...                     *
@@ -108,7 +113,6 @@ const char* StaticHub::getRTCStateString(uint32_t code) {
 /****************************************************************************************************
 * Logging members...                                                                                *
 ****************************************************************************************************/
-StringBuilder StaticHub::log_buffer;
 
 /*
 * Logger pass-through functions. Please mind the variadics...
@@ -202,7 +206,7 @@ volatile bool StaticHub::provide_random_int(uint32_t nu_rnd) {
 * @return   A 32-bit unsigned random number. This can be cast as needed.
 */
 uint32_t StaticHub::randomInt(void) {
-	uint32_t return_value = random();
+	uint32_t return_value = rand();
 	return return_value;
 }
 

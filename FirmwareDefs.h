@@ -14,6 +14,18 @@ This is one of the files that the application author is required to provide. Thi
 
 
 /*
+* Macros we will use in scattered places...
+*/
+#ifndef max
+    #define max( a, b ) ( ((a) > (b)) ? (a) : (b) )
+#endif
+
+#ifndef min
+    #define min( a, b ) ( ((a) < (b)) ? (a) : (b) )
+#endif
+
+
+/*
 * These are required fields.
 *
 * PROTOCOL_MTU is required for constraining communication length due to memory restrictions at
@@ -26,6 +38,7 @@ This is one of the files that the application author is required to provide. Thi
 #define HW_VERSION_STRING         "0"                    // Because we are strictly-software, we report as such.
 #define IDENTITY_STRING           "MurumLux"             // Might also be a hash....
 #define EXTENDED_DETAIL_STRING    ""                     // Optional. User-defined.
+#define PROTOCOL_VERSION          0x00000001             // The protocol version we are using.
 
 
 
