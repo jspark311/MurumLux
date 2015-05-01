@@ -49,7 +49,7 @@ This is the testbench version of StaticHub.
   #define LOG_INFO    6    /* informational */
   #define LOG_DEBUG   7    /* debug-level messages */
 
-  #include "ManuvrOS/EventManager.h"
+  #include <ManuvrOS/EventManager.h>
   #include "ManuvrOS/Scheduler.h"
   #include "StringBuilder/StringBuilder.h"
 

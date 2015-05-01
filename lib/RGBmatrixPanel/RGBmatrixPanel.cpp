@@ -358,6 +358,8 @@ void RGBmatrixPanel::releasePatternBuffer() {
     _fHavePatternBuffer = false;
 }
 
+
+
 void RGBmatrixPanel::updateDisplay() {
   // periodically run the DMA out
   //if(_fInit && !_fHavePatternBuffer && _updateState == WAITUPD && millis() - _tLastRun >= MSREFRESH && DMADone()) {
