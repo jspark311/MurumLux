@@ -443,6 +443,7 @@ void generate_random_gol_state() {
 }
 
 
+
 void advance_gol_states() {
   copy(todo, backup);
   life(todo, neighborhood);
@@ -454,8 +455,108 @@ void advance_gol_states() {
 *** Setup and Loop
 *****************************************************************************************/
 
+StringBuilder ipak_rx;
+int currentx = 0;
+int currenty = 0;
+int currentc = 0x020F;
+
+uint8_t mode = 6;
+
+// TODO: Replace these with the Scheduler.
+uint32_t time_until_action = 9001;
+uint32_t action_time_marker = 9001;
+  
+
+
+int8_t process_string_from_counterparty(StringBuilder* in) {
+  if (in == NULL) return -1;
+  if (in->length() < 11) return -2;
+  
+  int8_t return_value = 0;
+  const char* test = (const char*) in->string();
+
+  if (strcasestr(test, "ATCHVAR ")) {
+    // This sure looks like it should be here....
+    int variable = atoi((const char*) (test+8));
+    switch (variable) {
+      case 1:   // Position from e-field box.
+        Serial.print(".");
+        in->cull(10);
+        if (in->split(",") == 3) {
+          // Remember... The e-field box is not kinked 90-degrees.
+          currentx = (in->position_as_int(1)) >> 10;   // 63 max.
+          currenty = (in->position_as_int(0)) / 683;   // 96 max.
+          currentc = in->position_as_int(2);
+
+          switch (mode) {
+            case 3:
+              break;
+            case 4:
+              gen0[currentx][currenty] = 1;
+              break;
+          }
+        }
+        else {
+          Serial.println("This is not enough broccolis.");
+        }
+        break;
+      case 2:   // Airwheel
+        break;
+      case 3:   // Swipe direction
+        Serial.println("Swipe");
+        switch (mode) {
+          case 3:
+            break;
+          case 9:
+            // Swipe the logos.
+            action_time_marker = 0;
+            break;
+          default:
+            break;
+        }
+        break;
+      case 4:   // Tap direction
+        Serial.println("Tap");
+        switch (mode) {
+          case 2:
+            mode = 4;
+            break;
+          case 4:
+            mode = 9;
+            break;
+          case 9:
+            mode = 2;
+            break;
+          default:
+            mode = 2;
+            break;
+        }
+        break;
+      case 5:   // Double tap direction
+        Serial.println("Double tap");
+        break;
+      case 6:   // Touch direction
+        Serial.println("Touch");
+        break;
+      case 7:   // Special event
+        break;
+        
+      case 9:   // Module commands
+        break;
+    }
+  }
+  return return_value;
+}
+
+
+
+
+
 void setup() {
+  pinMode(39, INPUT); 
+
   Serial.begin(115200);
+  Serial1.begin(115200);
   init_fb();
   tStart = millis();
 
@@ -470,28 +571,18 @@ void setup() {
 }
 
 
-
 void loop() {
   unsigned char x, y;
 
   uint32_t tCur;
 //  matrix.begin();
   
-  int currentx = 0;
-  int currenty = 0;
-  int currentc = 0x020F;
-  
   uint32_t last_frame_time = 0;
-  uint8_t mode = 6;
-  
-  // TODO: Replace these with the Scheduler.
-  uint32_t time_until_action = 9000;
-  uint32_t action_time_marker = 9000;
   
   const char* logo_list[] = {chipkit_logo, microchip_logo, mpide_logo, digilent_logo, manuvr_logo};
   
   uint8_t logo_up = 0;
-  
+
   int frame_rate = 30;
   
   
@@ -512,7 +603,7 @@ void loop() {
           blackout();
           if (depth_per_channel < 5) depth_per_channel++;
           break;
-        
+          
         case 'Y': hue_shift_s += 1; break;
         case 'y': hue_shift_s -= 1; break;
 
@@ -576,6 +667,21 @@ void loop() {
       
     }
 
+    while (Serial1.available()) {
+      char c = Serial1.read();
+      ipak_rx.concat(c);
+      
+      if (c == '\n') {
+        if (process_string_from_counterparty(&ipak_rx)) {
+          ipak_rx.clear();
+        }
+        else {
+          // If it isn't meant for the machine, it is meant for the man looking at the screen. Render it.
+          ipak_rx.clear();
+        }
+      }
+    }
+
     if(tCur - tStart > frame_rate) {
       led ^= HIGH;
       tStart = tCur;
@@ -592,8 +698,7 @@ void loop() {
           advance_plasma();
           break;
         case 3:   // Paint mode.
-          //efieldBoxSetCoords(&currentx, &currenty, &currentc);
-          //setPixel(currentx, currenty, currentc);
+          setPixel(currentx, currenty, currentc);
           break;
         case 4:   // GoL
           advance_gol_states();
