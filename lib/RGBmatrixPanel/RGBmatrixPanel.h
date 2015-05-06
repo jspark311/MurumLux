@@ -38,7 +38,7 @@ class RGBmatrixPanel : public Adafruit_GFX {
     void releasePatternBuffer();
     inline void     RunDMA() {    DCH3CONbits.CHEN = 1;        }
     inline uint32_t DMADone() {   return(!DCH3CONbits.CHEN);   }
-    inline void haltDMA() {       DCH3CONbits.CHEN = 0;        }
+    inline void haltDMA() {       return;  } // DCH3CONbits.CHEN = 0;        }
     
 
     void swapBuffers(boolean);

@@ -92,7 +92,7 @@ RGBmatrixPanel::RGBmatrixPanel(uint8_t* fb, uint16_t buffsize, boolean dbuf, uin
 
     // Set up DMA channel 3
     DCH3CONbits.CHAED   = 0;                        // do not allow events to be remembered when disabled
-    DCH3CONbits.CHAEN   = 1;                        // Allow continuous operation
+    DCH3CONbits.CHAEN   = 0;                        // Disallow continuous operation
     DCH3CONbits.CHPRI   = 0b11;                     // highest priority
 
     DCH3ECON            = 0;                        // clear it
@@ -115,9 +115,9 @@ void RGBmatrixPanel::begin(void) {
   buffptr     = matrixbuff[1 - backindex]; // -> front buffer
 
   _fInit = true;
-  //cli();                // Enable global interrupts
-  //sei();                // Enable global interrupts
-  //T4CONbits.ON        = 1;    // turn on the timer
+  cli();                // Enable global interrupts
+  sei();                // Enable global interrupts
+  T4CONbits.ON        = 1;    // turn on the timer
   DCH3CONbits.CHEN   = 1;
 }
 
@@ -366,8 +366,10 @@ void RGBmatrixPanel::updateDisplay() {
   //  releasePatternBuffer();
   //}
   
-  if (DMADone()) RunDMA();
+  //if (DMADone()) RunDMA();
   
-  //for (int x = 0; x < fb_size; x++) LATE = matrixbuff[0][x];
+  for (int x = 0; x < fb_size; x++) {
+    LATE = matrixbuff[0][x];
+  }
 }
 

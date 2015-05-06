@@ -42,7 +42,7 @@ uint32_t    led     = HIGH;
 *       drawPixel().
 * 
 *****************************************************************************************/
-#define    MAX_DEPTH_PER_CHANNEL  4
+#define    MAX_DEPTH_PER_CHANNEL  1
 #define    PANEL_WIDTH  192
 #define    PANEL_HEIGHT 16   // Actual panel height is twice this, because we pack bits.
 #define    CONTROL_BYTES_PER_ROW 8
@@ -57,6 +57,21 @@ uint8_t        framebuffer[fb_size];
 bool update_frame = true;
 
 RGBmatrixPanel matrix(framebuffer, fb_size, false);
+
+
+void dump_fb_to_console() {
+  StringBuilder temp("Dumping FB to console:\n====================================\n");
+  int i = 0;
+  for (i = 0; i < fb_size; i++) {
+    temp.concatf("%02x ", framebuffer[i]);
+    if (i%32 == 31) {
+      Serial.println((char*) temp.string());
+      temp.clear();
+    }
+  }
+  temp.concatf("\n%d bytes dumped.", i);
+  Serial.println((char*) temp.string());
+}
 
 
 void setPixel(int x, int y, uint16_t color) {
@@ -162,7 +177,7 @@ void init_fb() {
   }
 
   // Here, we are going to set a trailing control sequence to prevent the last-drawn line from being brighter.
-  // Without this (or better ISR....) we will be leaving the last row OE until we redraw the whole panel.  
+  // Without this (or better ISR....) we will be leaving the last row OE until we start another redraw of the panel.  
   for (int i = 0; i < (PANEL_WIDTH * 2); i++) {
     framebuffer[(fb_size - tail_length) + i] = 0;
   }
@@ -203,7 +218,6 @@ void set_logo(const char* logo) {
 //  while (!matrix.DMADone()) {}
 
   for (int a = 0; a < 96*64; a++) {
-    
     setPixel(((a)/96), (95-((a)%96)), *((uint16_t*)ptr_cast+a));
   }
 }
@@ -456,9 +470,9 @@ void advance_gol_states() {
 *****************************************************************************************/
 
 StringBuilder ipak_rx;
-int currentx = 0;
-int currenty = 0;
-int currentc = 0x020F;
+uint8_t currentx = 0;
+uint8_t currenty = 0;
+uint16_t currentc = 0x020F;
 
 uint8_t mode = 6;
 
@@ -472,6 +486,7 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
   if (in == NULL) return -1;
   if (in->length() < 11) return -2;
   
+  StringBuilder output;
   int8_t return_value = 0;
   const char* test = (const char*) in->string();
 
@@ -479,31 +494,36 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
     // This sure looks like it should be here....
     int variable = atoi((const char*) (test+8));
     switch (variable) {
+      
       case 1:   // Position from e-field box.
-        Serial.print(".");
         in->cull(10);
         if (in->split(",") == 3) {
           // Remember... The e-field box is not kinked 90-degrees.
-          currentx = (in->position_as_int(1)) >> 10;   // 63 max.
-          currenty = (in->position_as_int(0)) / 683;   // 96 max.
-          currentc = in->position_as_int(2);
-
+          currentx = 63 - (((uint16_t) in->position_as_int(1)) >> 10);   // 63 max.
+          currenty = 95 - (((uint16_t) in->position_as_int(0)) / 683);   // 96 max.
+          currentc = ((uint16_t) in->position_as_int(2));
+          
           switch (mode) {
             case 3:
               break;
+            case 5:
+              //output.concatf("%s %s %s    %d %d %d    %d %d 0x%04x\n", in->position(1), in->position(0), in->position(2), (uint16_t) in->position_as_int(1), (uint16_t) in->position_as_int(0), (uint16_t) in->position_as_int(2), currentx, currenty, currentc);
+              setPixel(currentx, currenty, 0xF81F);
             case 4:
-              gen0[currentx][currenty] = 1;
+              todo[currentx][currenty] = 1;
               break;
           }
         }
         else {
-          Serial.println("This is not enough broccolis.");
+          output.concat("This is not enough broccolis.");
         }
         break;
+        
       case 2:   // Airwheel
         break;
+        
       case 3:   // Swipe direction
-        Serial.println("Swipe");
+        output.concatf("Swipe 0x02x\n", atoi(test+10));
         switch (mode) {
           case 3:
             break;
@@ -516,7 +536,7 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
         }
         break;
       case 4:   // Tap direction
-        Serial.println("Tap");
+        output.concatf("Tap 0x02x\n", atoi(test+10));
         switch (mode) {
           case 2:
             mode = 4;
@@ -533,11 +553,23 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
         }
         break;
       case 5:   // Double tap direction
-        Serial.println("Double tap");
+        output.concatf("Double Tap 0x02x\n", atoi(test+10));
         break;
       case 6:   // Touch direction
-        Serial.println("Touch");
+        {
+          int touch_val = atoi(test+10);
+          output.concatf("Touch 0x02x\n", atoi(test+10));
+          switch (mode) {
+            case 4:  // Suspend GoL if we are using it.
+              if (touch_val) mode = 5;
+              break;
+            case 5:  // Resume GoL when touch is relinquished.
+              if (0 == touch_val) mode = 4;
+              break;
+          }
+        }
         break;
+
       case 7:   // Special event
         break;
         
@@ -545,6 +577,7 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
         break;
     }
   }
+  if (output.length() > 0) Serial.print((char*) output.string());
   return return_value;
 }
 
@@ -568,6 +601,9 @@ void setup() {
   pinMode(34, OUTPUT); 
   digitalWrite(34, 0);
   digitalWrite(34, 1);  // Hold MS inactive.
+  
+  generate_random_gol_state();
+  mode = 4;
 }
 
 
@@ -594,14 +630,23 @@ void loop() {
       if ((c >= 0x30) && (c < 0x3A)) mode = (c - 0x30);
       
       switch (c) {
+        case 'd':
+          dump_fb_to_console();
+          break;
         case '-':
           blackout();
-          if (depth_per_channel > 0) depth_per_channel--;
+          if (depth_per_channel > 0) {
+            depth_per_channel--;
+            init_fb();
+          }
           break;
           
         case '+':
           blackout();
-          if (depth_per_channel < 5) depth_per_channel++;
+          if (depth_per_channel < 5) {
+            depth_per_channel++;
+            init_fb();
+          }
           break;
           
         case 'Y': hue_shift_s += 1; break;
