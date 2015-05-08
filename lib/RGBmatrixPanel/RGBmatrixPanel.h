@@ -32,13 +32,18 @@ class RGBmatrixPanel : public Adafruit_GFX {
 
     void begin();
     void drawPixel(int16_t x, int16_t y, uint16_t c);
-    void fillScreen(uint16_t c);
     void updateDisplay();
     bool takePatternBuffer();
     void releasePatternBuffer();
-    inline void     RunDMA() {    DCH3CONbits.CHEN = 1;        }
-    inline uint32_t DMADone() {   return(!DCH3CONbits.CHEN);   }
-    inline void haltDMA() {       DCH3CONbits.CHEN = 0;        }
+    inline void     RunDMA() {
+      DCH3CONbits.CHEN = 1;
+    }
+    inline uint32_t DMADone() {  
+      return(!DCH3CONbits.CHEN);   
+    }
+    inline void haltDMA() {
+      DCH3CONbits.CHEN = 0;
+    }
   
     void init_fb(int ctl_style);
 

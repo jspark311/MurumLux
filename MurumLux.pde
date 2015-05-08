@@ -22,6 +22,7 @@ uint32_t    tStart  = 0;
 uint32_t    led     = HIGH;
 
 
+uint32_t last_interaction = 0;
 
 
 
@@ -70,8 +71,8 @@ void set_logo(const char* logo) {
   uint16_t* ptr_cast = (uint16_t*) logo;
   /* Until the render buffer is torn off the top of the framebuffer, we
      do this to prevent nasty artifacts. */
-//  matrix.haltDMA();
-//  while (!matrix.DMADone()) {}
+  matrix.haltDMA();
+  while (!matrix.DMADone()) {}
 
   for (int a = 0; a < 96*64; a++) {
     matrix.drawPixel(((a)/96), (95-((a)%96)), *((uint16_t*)ptr_cast+a));
@@ -141,7 +142,7 @@ static const int8_t sinetab[256] = {
 };
 
 
-const float radius1  = 16.3, radius2  = 23.0, radius3  = 40.8, radius4  = 44.2,
+float radius1  = 16.3, radius2  = 23.0, radius3  = 40.8, radius4  = 44.2,
             centerx1 = 16.1, centerx2 = 11.6, centerx3 = 23.4, centerx4 =  4.1, 
             centery1 =  8.7, centery2 =  6.5, centery3 = 14.0, centery4 = -2.9;
 float       angle1   =  0.0, angle2   =  0.0, angle3   =  0.0, angle4   =  0.0;
@@ -288,13 +289,17 @@ bool compare(int array1[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH], int array2[GOL_BOARD
     return false;
 }
 
+
+uint16_t gol_color = 0x00CC;
+
+
 //This function prints the 50 x 100 part of the array, since that's the only
 //portion of the array that we're really interested in. 
 void print(int array[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH], int bu[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH]) {
   for(int j = 0; j < GOL_BOARD_HEIGHT; j++) {
     for(int i = 0; i < GOL_BOARD_WIDTH; i++) {
       if(array[j][i] == 1) {
-        matrix.drawPixel(j, i, (bu[j][i]) ? 0x0FF0 : 0x0617);
+        matrix.drawPixel(j, i, (bu[j][i]) ? gol_color : 0x0617);
       }
       else {
         matrix.drawPixel(j, i, (bu[j][i]) ? 0xC000 : 0);
@@ -326,7 +331,6 @@ void generate_random_gol_state() {
 void advance_gol_states() {
   copy(todo, backup);
   life(todo, neighborhood);
-  print(todo, backup);
 }
 
 
@@ -335,6 +339,8 @@ void advance_gol_states() {
 *****************************************************************************************/
 
 StringBuilder ipak_rx;
+uint8_t priorx = 0;
+uint8_t priory = 0;
 uint8_t currentx = 0;
 uint8_t currenty = 0;
 uint16_t currentc = 0x020F;
@@ -345,6 +351,11 @@ uint8_t mode = 6;
 uint32_t time_until_action = 9001;
 uint32_t action_time_marker = 9001;
   
+
+float* target_data = &angle1_s;
+
+
+uint8_t noise_data_select = 0;
 
 
 int8_t process_string_from_counterparty(StringBuilder* in) {
@@ -361,20 +372,36 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
     switch (variable) {
       
       case 1:   // Position from e-field box.
+        last_interaction = millis();
         in->cull(10);
         if (in->split(",") == 3) {
           // Remember... The e-field box is not kinked 90-degrees.
+          priorx = currentx;
+          priory = currenty;
+          
           currentx = 63 - (((uint16_t) in->position_as_int(1)) >> 10);   // 63 max.
           currenty = 95 - (((uint16_t) in->position_as_int(0)) / 683);   // 96 max.
           currentc = ((uint16_t) in->position_as_int(2));
           
           switch (mode) {
+            case 2:
+              *(target_data) = (((int16_t) in->position_as_int(1)) - 32768) * 0.0000003f;
+              hue_shift_s = (int) (currentc - 32768) / 3277;
+              break;
             case 3:
+              if ((priorx != currentx) || (priory != currenty)) {
+                draw_cursor(priorx, priory, 0);
+                draw_cursor(currentx, currenty, currentc);
+              }
               break;
             case 5:
-              //output.concatf("%s %s %s    %d %d %d    %d %d 0x%04x\n", in->position(1), in->position(0), in->position(2), (uint16_t) in->position_as_int(1), (uint16_t) in->position_as_int(0), (uint16_t) in->position_as_int(2), currentx, currenty, currentc);
-              draw_cursor(currentx, currenty, 0xF81F);
             case 4:
+              if ((priorx != currentx) || (priory != currenty)) {
+                draw_cursor(priorx, priory, 0);
+                draw_cursor(currentx, currenty, 0xFFE0);
+                priorx = currentx;
+                priory = currenty;
+              }
               todo[currentx][currenty] = 1;
               break;
           }
@@ -385,45 +412,72 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
         break;
         
       case 2:   // Airwheel
+        last_interaction = millis();
         break;
         
       case 3:   // Swipe direction
-        output.concatf("Swipe 0x02x\n", atoi(test+10));
+        last_interaction = millis();
+        output.concatf("Swipe 0x%02x\n", atoi(test+10));
         switch (mode) {
+          case 2:
+            blackout();
+            mode = 3;
+            break;
           case 3:
+            blackout();
+            mode = 4;
+            break;
+          case 4:
+            blackout();
+            mode = 9;
             break;
           case 9:
-            // Swipe the logos.
-            action_time_marker = 0;
-            break;
           default:
+            blackout();
+            angle1_s =  0.0, angle2_s =  0.0, angle3_s =  0.0, angle4_s =  0.0;
+            mode = 2;
             break;
         }
         break;
       case 4:   // Tap direction
-        output.concatf("Tap 0x02x\n", atoi(test+10));
-        switch (mode) {
-          case 2:
-            mode = 4;
-            break;
-          case 4:
-            mode = 9;
-            break;
-          case 9:
-            mode = 2;
-            break;
-          default:
-            mode = 2;
-            break;
+        last_interaction = millis();
+        output.concatf("Tap 0x%02x\n", atoi(test+10));
+        if (mode == 2) {
+          switch (noise_data_select % 5) {
+            case 0:
+              target_data = &angle1_s;
+              noise_data_select++;
+              break;
+            case 1:
+              target_data = &angle2_s;
+              noise_data_select++;
+              break;
+            case 2:
+              target_data = &angle3_s;
+              noise_data_select++;
+              break;
+            case 3:
+              target_data = &angle4_s;
+              noise_data_select++;
+              break;
+          }
+        }
+        else if (mode == 3) {
+          matrix.drawPixel(currentx, currenty, matrix.ColorHSV(currentc * 3, 255, 255, true));
+        }
+        else if (mode == 9) {
+          action_time_marker = 0;
         }
         break;
       case 5:   // Double tap direction
-        output.concatf("Double Tap 0x02x\n", atoi(test+10));
+        last_interaction = millis();
+        output.concatf("Double Tap 0x%02x\n", atoi(test+10));
         break;
       case 6:   // Touch direction
+        last_interaction = millis();
         {
           int touch_val = atoi(test+10);
-          output.concatf("Touch 0x02x\n", atoi(test+10));
+          output.concatf("Touch 0x%02x\n", atoi(test+10));
           switch (mode) {
             case 4:  // Suspend GoL if we are using it.
               if (touch_val) mode = 5;
@@ -447,14 +501,12 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
 }
 
 
-
-
-
 void setup() {
   pinMode(39, INPUT); 
 
   Serial.begin(115200);
   Serial1.begin(115200);
+
   matrix.init_fb(0);
   tStart = millis();
 
@@ -484,11 +536,7 @@ void loop() {
   
   uint8_t logo_up = 3;
 
-  int frame_rate = 20;
-
-  set_logo(logo_list[3]);
-  set_logo(logo_list[3]);
-  mode = 5;
+  int frame_rate = 10;
 
   while (1) {
     tCur = millis();
@@ -502,21 +550,6 @@ void loop() {
           matrix.dumpMatrix();
           break;
           
-        case 'Y': hue_shift_s += 1; break;
-        case 'y': hue_shift_s -= 1; break;
-
-        case 'U': angle1_s += 0.02; break;
-        case 'u': angle1_s -= 0.02; break;
-
-        case 'I': angle2_s += 0.02; break;
-        case 'i': angle2_s -= 0.02; break;
-
-        case 'O': angle3_s += 0.02; break;
-        case 'o': angle3_s -= 0.02; break;
-
-        case 'P': angle4_s += 0.02; break;
-        case 'p': angle4_s -= 0.02; break;
-        
         case 'f': 
           frame_rate++; 
           Serial.print("Frame period: ");
@@ -545,10 +578,10 @@ void loop() {
           break;
         case '2':
           blackout();
-          matrix.print("Test text\n");
           break;
         case '3':
           matrix.fillScreen(0);
+          matrix.print("Test text\n");
           break;
         case '4':
           generate_random_gol_state();
@@ -599,6 +632,12 @@ void loop() {
       led ^= HIGH;
       tStart = tCur;
       digitalWrite(PIN_LED1, led);
+      if ((mode != 9) && (millis() - last_interaction > 300000)) {
+        blackout();
+        action_time_marker = 0;
+        mode = 9;
+      }
+
       switch (mode) {
         case 1:   // Pixel run mode (for debugging things)
           matrix.drawPixel(currentx % 64, currentx/64, currentc);
@@ -611,10 +650,19 @@ void loop() {
           advance_plasma();
           break;
         case 3:   // Paint mode.
-          matrix.drawPixel(currentx, currenty, currentc);
+          if ((priorx != currentx) || (priory != currenty)) {
+            draw_cursor(priorx, priory, 0);
+            draw_cursor(currentx, currenty, currentc);
+          }
           break;
         case 4:   // GoL
           advance_gol_states();
+        case 5:   // GoL
+          print(todo, backup);
+          if ((priorx != currentx) || (priory != currenty)) {
+            draw_cursor(priorx, priory, 0);
+            draw_cursor(currentx, currenty, 0xFFE0);
+          }
           break;
 
         case 9:   // Logo cycle
@@ -628,14 +676,6 @@ void loop() {
       }
     }
 
-    update_frame = true;
-
-    //last_frame_time = micros();
-    if (update_frame) {
-      matrix.updateDisplay();
-      update_frame = false;
-    }
-    //last_frame_time = micros()-last_frame_time;
+    matrix.updateDisplay();
   }
 }
-

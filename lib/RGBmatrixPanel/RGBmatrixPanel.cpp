@@ -95,7 +95,7 @@ RGBmatrixPanel::RGBmatrixPanel() :
     *pLat &= 0x00;
     *pAddr &= 0x00;  // Set all the output pins to zero.
 
-    //// set up timer 4 
+    // set up timer 4 
     //T4CONbits.SIDL      = 0;        // operate in idle mode
     //T4CONbits.TGATE     = 0;        // gated time disabled
     //T4CONbits.TCKPS     = 0b000;    // prescaler of 1:1
@@ -109,11 +109,11 @@ RGBmatrixPanel::RGBmatrixPanel() :
 
     // Set up DMA channel 3
     DCH3CONbits.CHAED   = 0;                        // do not allow events to be remembered when disabled
-    DCH3CONbits.CHAEN   = 1;                        // Disallow continuous operation
+    DCH3CONbits.CHAEN   = 1;                        // Allow continuous operation
     DCH3CONbits.CHPRI   = 0b11;                     // highest priority
 
     DCH3ECON            = 0;                        // clear it
-    //DCH3ECONbits.CHSIRQ = _TIMER_4_VECTOR;          // Timer 4 event
+
     DCH3ECONbits.SIRQEN = 1;                        // enable IRQ transfer enables
     DCH3INT             = 0;                        // do not trigger any events
 
@@ -122,22 +122,6 @@ RGBmatrixPanel::RGBmatrixPanel() :
     DCH3DSA             = KVA_2_PA(DMATGTADDR);     // destination address is RE0 - RE7
     DCH3DSIZ            = 1;           // CBYTESREQUIRED bytes at the destination
     DCH3CSIZ            = fb_size;           // only transfer CBYTESREQUIRED bytes per event
-
-//    // Set up DMA channel 4
-//    DCH4CONbits.CHAED   = 0;                        // do not allow events to be remembered when disabled
-//    DCH4CONbits.CHAEN   = 0;                        // Disallow continuous operation
-//    DCH4CONbits.CHPRI   = 0b11;                     // highest priority
-//
-//    DCH4ECON            = 0;                        // clear it
-//    DCH4ECONbits.CHSIRQ = _DMA3_VECTOR;          // Timer 4 event
-//    DCH4ECONbits.SIRQEN = 1;                        // enable IRQ transfer enables
-//    DCH4INT             = 0;                        // do not trigger any events
-//
-//    DCH4SSA             = KVA_2_PA(fb+(buffsize >> 2)); // source address of transfer
-//    DCH4SSIZ            = buffsize >> 2;          // number of bytes in source
-//    DCH4DSA             = KVA_2_PA(DMATGTADDR);     // destination address is RE0 - RE7
-//    DCH4DSIZ            = 1;           // CBYTESREQUIRED bytes at the destination
-//    DCH4CSIZ            = buffsize >> 2;           // only transfer CBYTESREQUIRED bytes per event
 
   swapflag  = false;
   backindex = 0;     // Array index of back buffer
@@ -148,9 +132,8 @@ void RGBmatrixPanel::begin(void) {
   buffptr     = matrixbuff[1 - backindex]; // -> front buffer
 
   _fInit = true;
-  cli();                // Enable global interrupts
-  sei();                // Enable global interrupts
-  //T4CONbits.ON        = 1;    // turn on the timer
+  cli();
+  sei();
   DCH3CONbits.CHEN   = 1;
 }
 
@@ -383,14 +366,14 @@ uint16_t RGBmatrixPanel::ColorHSV(
 
 void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
   if ((x > 63) || (y > 95)) return;
-  
+
   // Experimenting with color depth...
-  //uint8_t r = (color >> 11) & 0x1F;   // RRRRRggggggbbbbb
-  //uint8_t g = (color >> 6)  & 0x1F;   // rrrrrGGGGGgbbbbb
-  //uint8_t b = (color)       & 0x1F;   // rrrrrggggggBBBBB
-  uint8_t r = (color >> 13) & 0x07;   // RRRrrggggggbbbbb
-  uint8_t g = (color >> 8)  & 0x07;   // rrrrrGGGgggbbbbb
-  uint8_t b = (color >> 2)  & 0x07;   // rrrrrggggggBBBbb
+  uint8_t r = (color >> 13) & 0x07;   // RRRRrggggggbbbbb
+  uint8_t g = (color >> 8)  & 0x07;   // rrrrrGGGGggbbbbb
+  uint8_t b = (color >> 2)  & 0x07;   // rrrrrggggggBBBBb
+  //uint8_t r = (color >> 12) & 0x0F;   // RRRRrggggggbbbbb
+  //uint8_t g = (color >> 7)  & 0x0F;   // rrrrrGGGGggbbbbb
+  //uint8_t b = (color >> 1)  & 0x0F;   // rrrrrggggggBBBBb
   
   int orig_y = y;
 
@@ -442,19 +425,6 @@ void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
   }
 }
 
-
-
-void RGBmatrixPanel::fillScreen(uint16_t c) {
-  if((c == 0x0000) || (c == 0xffff)) {
-    // For black or white, all bits in frame buffer will be identically
-    // set or unset (regardless of weird bit packing), so it's OK to just
-    // quickly memset the whole thing:
-    memset(matrixbuff[backindex], c, _width * nRows * 3);
-  } else {
-    // Otherwise, need to handle it the long way:
-    Adafruit_GFX::fillScreen(c);
-  }
-}
 
 // Return address of back buffer -- can then load/store data directly
 uint8_t *RGBmatrixPanel::backBuffer() {
