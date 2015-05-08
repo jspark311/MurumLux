@@ -632,9 +632,10 @@ void loop() {
       led ^= HIGH;
       tStart = tCur;
       digitalWrite(PIN_LED1, led);
-      if ((mode != 9) && (millis() - last_interaction > 300000)) {
+      if ((mode != 9) && (millis() - last_interaction > 60000)) {
         blackout();
         action_time_marker = 0;
+        logo_up = 0;
         mode = 9;
       }
 
