@@ -79,13 +79,13 @@ RGBmatrixPanel::RGBmatrixPanel(uint8_t* fb, uint16_t buffsize, boolean dbuf, uin
     *pAddr &= 0x00;  // Set all the output pins to zero.
 
     // set up timer 4 
-    //T4CONbits.SIDL      = 0;        // operate in idle mode
-    //T4CONbits.TGATE     = 0;        // gated time disabled
-    //T4CONbits.TCKPS     = 0b000;    // prescaler of 1:1
-    //T4CONbits.T32       = 0;        // 16 bit timer
-    //T4CONbits.TCS       = 0;        // use PBClk as source; would set this but the SD does not have this bit
-    //TMR4                = 0;        // clear the counter2.5 MHz
-    //PR4                 = ((__PIC32_pbClk + (TMRFREQ / 2)) / TMRFREQ);  // clock this at TMRFREQ
+    T4CONbits.SIDL      = 0;        // operate in idle mode
+    T4CONbits.TGATE     = 0;        // gated time disabled
+    T4CONbits.TCKPS     = 0b000;    // prescaler of 1:1
+    T4CONbits.T32       = 0;        // 16 bit timer
+    T4CONbits.TCS       = 0;        // use PBClk as source; would set this but the SD does not have this bit
+    TMR4                = 0;        // clear the counter2.5 MHz
+    PR4                 = ((__PIC32_pbClk + (TMRFREQ / 2)) / TMRFREQ);  // clock this at TMRFREQ
 
     // someone else may have already turned this on
     DMACONbits.ON       = 1;                        // ensure the DMA controller is ON
@@ -366,10 +366,10 @@ void RGBmatrixPanel::updateDisplay() {
   //  releasePatternBuffer();
   //}
   
-  //if (DMADone()) RunDMA();
+  if (DMADone()) RunDMA();
   
-  for (int x = 0; x < fb_size; x++) {
-    LATE = matrixbuff[0][x];
-  }
+  //for (int x = 0; x < fb_size; x++) {
+  //  LATE = matrixbuff[0][x];
+  //}
 }
 

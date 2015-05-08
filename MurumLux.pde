@@ -120,14 +120,14 @@ void setPixel(int x, int y, uint16_t color) {
   uint8_t temp_byte = 0;
   uint8_t nu_byte   = 0;
   for (int plane = 0; plane < depth_per_channel; plane++) {
-    temp_byte = framebuffer[(plane * plane_size)+planar_offset] & ~(0x07 << shift_offset);
+    temp_byte = framebuffer[(plane * plane_size)+planar_offset + CONTROL_BYTES_PER_ROW] & ~(0x07 << shift_offset);
     nu_byte   = 0;
     if (r>0) nu_byte = nu_byte + (1 << (shift_offset+0));
     if (g>0) nu_byte = nu_byte + (1 << (shift_offset+1));
     if (b>0) nu_byte = nu_byte + (1 << (shift_offset+2));
 
-    framebuffer[(plane * plane_size)+planar_offset] = nu_byte | temp_byte;
-    framebuffer[(plane * plane_size)+planar_offset+1] = nu_byte | temp_byte | 0x40;
+    framebuffer[(plane * plane_size)+planar_offset + CONTROL_BYTES_PER_ROW] = nu_byte | temp_byte;
+    framebuffer[(plane * plane_size)+planar_offset+1 + CONTROL_BYTES_PER_ROW] = nu_byte | temp_byte | 0x40;
     r = r >> 1;
     g = g >> 1;
     b = b >> 1;
@@ -154,41 +154,66 @@ void init_fb() {
   // r1 g1 b1 r2 g2 b2            <--- Data pin mapping
   // A  B  C  D  LA OE            <--- Control signal mapping
   //
-  
+  // When we write a byte to PORTE that has bit 6 set where it was previously unset, the 
+  //   data on bits 0-5 are clocked into the register that drives the control signals indicated.
+  // When we write a byte to PORTE that has bit 7 set where it was previously unset, the 
+  //   data on bits 0-5 are clocked into the input pins to the shift-registers in the panel.
+  // This is a terrible waste of memory and bandwidth unless you have no usable clock signals
+  //   broken out on your board. :-(  Fortunately, the PIC32MZ has both memory and bandwidth to burn.
+  // There are some practical advantages to this... It means the data stream is inherrently 
+  //   self-synchronizing. It also means that we don't need software machinary in an ISR to move the
+  //   control signals, nor hardware on a board (except the hex D flipflop).
+  //   The net effect is that we only worry about our control signals when we init this render buffer.
+  //   As long as the bits we set for control puposes don't get clobbered by a mistake elsewhere, we
+  //   can simply point DMA at this buffer and let it run forever. From then on, all changes written
+  //   to the render buffer are shown automatically with no further software intervention.
+  //
+  // The render buffer is setup this way:
+  //   C-Frame = "Control frame". Data desined for the panel's control pins (A-D, Strobe, Latch, OE)
+  //   D-Frame = "Data frame".    Data desined for the panel's data pins (r0, r1, g0, g1, b0, b1)
+  //   TAIL    = The tail frame is a row's worth of meaningless data that we write for timing reasons.
+  //
+  // /---------|-----------|---------|-----------|---------|-----------|---------|-----------|------\
+  // | C-Frame | D-Frame 0 | C-Frame | D-Frame 1 | C-Frame | D-Frame 2 | C-Frame | D-Frame 3 | TAIL |
+  // \---------|-----------|---------|-----------|---------|-----------|---------|-----------|------/
+  //
+  // 
+  //
+  int ren_buf_idx = 0;  // This is our accumulated index inside of the render buffer.
   int total_row_length = (PANEL_WIDTH * 2) + CONTROL_BYTES_PER_ROW;
   for (int plane = 0; plane < depth_per_channel; plane++) {
     for (int _cur_row = 0; _cur_row < PANEL_HEIGHT; _cur_row++) {
-      for (int k = 0; k < (PANEL_WIDTH * 2); k+=2) {
-        // Zero-out the color information and install the panel clock band...
-        framebuffer[((plane * plane_size) + (_cur_row * total_row_length) + k) + 0] = 0;
-        framebuffer[((plane * plane_size) + (_cur_row * total_row_length) + k) + 1] = 64;
-      }
+      // Build the C-Frame and its clock band.
+      framebuffer[ren_buf_idx++] = _cur_row + 32;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+      framebuffer[ren_buf_idx++] = _cur_row + 16 + 32;
+      framebuffer[ren_buf_idx++] = _cur_row + 16 + 32 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row + 32;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
       
-      // Set ABCD and our clock band for the flip flops driving them.
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 0] = _cur_row + 32;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 1] = _cur_row + 32 + 128;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 2] = _cur_row + 16 + 32;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 3] = _cur_row + 16 + 32 + 128;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 4] = _cur_row + 32;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 5] = _cur_row + 32 + 128;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 6] = _cur_row;
-      framebuffer[((plane * plane_size) + _cur_row * total_row_length) + (PANEL_WIDTH * 2) + 7] = _cur_row + 128;
+      for (int k = 0; k < PANEL_WIDTH; k++) {
+        // Zero-out the D-Frame and install the panel clock band...
+        framebuffer[ren_buf_idx++] = 0;
+        framebuffer[ren_buf_idx++] = 64;
+      }
     }
   }
 
   // Here, we are going to set a trailing control sequence to prevent the last-drawn line from being brighter.
   // Without this (or better ISR....) we will be leaving the last row OE until we start another redraw of the panel.  
-  for (int i = 0; i < (PANEL_WIDTH * 2); i++) {
-    framebuffer[(fb_size - tail_length) + i] = 0;
+  for (int i = 0; i < PANEL_WIDTH; i++) {
+    framebuffer[ren_buf_idx++] = 0;
   }
-  framebuffer[fb_size - 8] = 32;
-  framebuffer[fb_size - 7] = 32 + 128;
-  framebuffer[fb_size - 6] = 32;
-  framebuffer[fb_size - 5] = 32 + 128;
-  framebuffer[fb_size - 4] = 32;
-  framebuffer[fb_size - 3] = 32 + 128;
-  framebuffer[fb_size - 2] = 32;
-  framebuffer[fb_size - 1] = 32 + 128;
+  framebuffer[ren_buf_idx++] = 32;
+  framebuffer[ren_buf_idx++] = 32 + 128;
+  framebuffer[ren_buf_idx++] = 32;
+  framebuffer[ren_buf_idx++] = 32 + 128;
+  framebuffer[ren_buf_idx++] = 32;
+  framebuffer[ren_buf_idx++] = 32 + 128;
+  framebuffer[ren_buf_idx++] = 32;
+  framebuffer[ren_buf_idx++] = 32 + 128;
 }
 
 
@@ -223,6 +248,16 @@ void set_logo(const char* logo) {
 }
 
 
+void draw_cursor(int x, int y, uint16_t color) {
+  setPixel(x, y, color);
+  uint8_t i = 0;
+  for (uint8_t i = 1; i < 3; i++) {
+    if ((x+i) < 96) setPixel(x+i, y, color);
+    if ((x-i) >= 0) setPixel(x-i, y, color);
+    if ((y+i) < 96) setPixel(x, y+i, color);
+    if ((y-i) >= 0) setPixel(x, y-i, color);
+  }
+}
 
 
 /*****************************************************************************************
@@ -362,37 +397,37 @@ void life(int array[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH], char choice)
   //without effecting the other cells and the calculations being performed on them.
   int temp[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH];
   copy(array, temp);
-  for(int j = 1; j < GOL_BOARD_HEIGHT-1; j++) {
-    for(int i = 1; i < GOL_BOARD_WIDTH-1; i++) {
+  for(int j = GOL_BOARD_HEIGHT; j < (GOL_BOARD_HEIGHT*2); j++) {
+    for(int i = GOL_BOARD_WIDTH; i < (GOL_BOARD_WIDTH*2); i++) {
       if(choice == 'm') {
         //The Moore neighborhood checks all 8 cells surrounding the current cell in the array.
         int count = 0;
-        count = array[j-1][i] + 
-          array[j-1][i-1] +
-          array[j][i-1] +
-          array[j+1][i-1] +
-          array[j+1][i] +
-          array[j+1][i+1] +
-          array[j][i+1] +
-          array[j-1][i+1];
+        count = array[(j-1)%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] + 
+	  array[(j-1)%GOL_BOARD_HEIGHT][(i-1) % GOL_BOARD_WIDTH] +
+	  array[j%GOL_BOARD_HEIGHT][(i-1) % GOL_BOARD_WIDTH] +
+	  array[(j+1)%GOL_BOARD_HEIGHT][(i-1) % GOL_BOARD_WIDTH] +
+	  array[(j+1)%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] +
+	  array[(j+1)%GOL_BOARD_HEIGHT][(i+1) % GOL_BOARD_WIDTH] +
+	  array[j%GOL_BOARD_HEIGHT][(i+1) % GOL_BOARD_WIDTH] +
+          array[(j-1)%GOL_BOARD_HEIGHT][(i+1) % GOL_BOARD_WIDTH];
 
-        if(count < 2 || count > 3) temp[j][i] = 0;  //The cell dies.
-        else if(count == 2) temp[j][i] = array[j][i];  //The cell stays the same.
-        else if(count == 3) temp[j][i] = 1;  //The cell either stays alive, or is "born".
+        if(count < 2 || count > 3) temp[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] = 0;  //The cell dies.
+        else if(count == 2) temp[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] = array[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH];  //The cell stays the same.
+        else if(count == 3) temp[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] = 1;  //The cell either stays alive, or is "born".
       }
 
       else if(choice == 'v') {
         //The Von Neumann neighborhood checks only the 4 surrounding cells in the array,
         //(N, S, E, and W).
         int count = 0;
-        count = array[j-1][i] +
-          array[j][i-1] +
-          array[j+1][i] +
-          array[j][i+1];  
+        count = array[(j-1)%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] +
+          array[j%GOL_BOARD_HEIGHT][(i-1) % GOL_BOARD_WIDTH] +
+          array[(j+1)%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] +
+          array[j%GOL_BOARD_HEIGHT][(i+1) % GOL_BOARD_WIDTH];  
           
-        if(count < 2 || count > 3) temp[j][i] = 0; //The cell dies.
-        else if(count == 2) temp[j][i] = array[j][i];    //The cell stays the same.
-        else if(count == 3) temp[j][i] = 1;   //The cell either stays alive, or is "born".
+        if(count < 2 || count > 3) temp[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] = 0; //The cell dies.
+        else if(count == 2) temp[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] = array[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH];    //The cell stays the same.
+        else if(count == 3) temp[j%GOL_BOARD_HEIGHT][i % GOL_BOARD_WIDTH] = 1;   //The cell either stays alive, or is "born".
       }        
     }
    }
@@ -429,7 +464,7 @@ void print(int array[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH], int bu[GOL_BOARD_HEIGHT
   for(int j = 0; j < GOL_BOARD_HEIGHT; j++) {
     for(int i = 0; i < GOL_BOARD_WIDTH; i++) {
       if(array[j][i] == 1) {
-        setPixel(j, i, (bu[j][i]) ? 0xFFFF : 0x0617);
+        setPixel(j, i, (bu[j][i]) ? 0x0FF0 : 0x0617);
       }
       else {
         setPixel(j, i, (bu[j][i]) ? 0xC000 : 0);
@@ -508,7 +543,7 @@ int8_t process_string_from_counterparty(StringBuilder* in) {
               break;
             case 5:
               //output.concatf("%s %s %s    %d %d %d    %d %d 0x%04x\n", in->position(1), in->position(0), in->position(2), (uint16_t) in->position_as_int(1), (uint16_t) in->position_as_int(0), (uint16_t) in->position_as_int(2), currentx, currenty, currentc);
-              setPixel(currentx, currenty, 0xF81F);
+              draw_cursor(currentx, currenty, 0xF81F);
             case 4:
               todo[currentx][currenty] = 1;
               break;
@@ -615,12 +650,12 @@ void loop() {
   
   uint32_t last_frame_time = 0;
   
-  const char* logo_list[] = {chipkit_logo, microchip_logo, mpide_logo, digilent_logo, manuvr_logo};
+  const char* logo_list[] = {chipkit_logo, microchip_logo, mpide_logo, manuvr_logo};
   
   uint8_t logo_up = 0;
 
   int frame_rate = 30;
-  
+  matrix.RunDMA();
   
   while (1) {
     tCur = millis();
@@ -702,8 +737,8 @@ void loop() {
         case '8':
           break;
         case '9':
-          set_logo(logo_list[logo_up % 5]);
-          set_logo(logo_list[logo_up % 5]);
+          set_logo(logo_list[logo_up % 4]);
+          set_logo(logo_list[logo_up % 4]);
           logo_up++;
           action_time_marker = millis();
           //matrix.fillScreen(0);
@@ -751,8 +786,8 @@ void loop() {
 
         case 9:   // Logo cycle
           if(millis() - action_time_marker > time_until_action) {
-            set_logo(logo_list[logo_up % 5]);
-            set_logo(logo_list[logo_up % 5]);
+            set_logo(logo_list[logo_up % 4]);
+            set_logo(logo_list[logo_up % 4]);
             logo_up++;
             action_time_marker = millis();
           }
