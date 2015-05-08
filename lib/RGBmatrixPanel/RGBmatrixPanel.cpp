@@ -40,7 +40,7 @@ BSD license, all text above must be included in any redistribution.
 
 #define DMATGTADDR      (&LATE)                 // the DMA target address to write the pattern
 
-#define    MAX_DEPTH_PER_CHANNEL  4
+#define    MAX_DEPTH_PER_CHANNEL  8
 #define    PANEL_WIDTH  192
 #define    PANEL_HEIGHT 16   // Actual panel height is twice this, because we pack bits.
 #define    CONTROL_BYTES_PER_ROW 6
@@ -388,9 +388,9 @@ void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
   //uint8_t r = (color >> 11) & 0x1F;   // RRRRRggggggbbbbb
   //uint8_t g = (color >> 6)  & 0x1F;   // rrrrrGGGGGgbbbbb
   //uint8_t b = (color)       & 0x1F;   // rrrrrggggggBBBBB
-  uint8_t r = (color >> 14) & 0x03;   // RRRrrggggggbbbbb
-  uint8_t g = (color >> 9)  & 0x03;   // rrrrrGGGgggbbbbb
-  uint8_t b = (color >> 3)  & 0x03;   // rrrrrggggggBBBbb
+  uint8_t r = (color >> 13) & 0x07;   // RRRrrggggggbbbbb
+  uint8_t g = (color >> 8)  & 0x07;   // rrrrrGGGgggbbbbb
+  uint8_t b = (color >> 2)  & 0x07;   // rrrrrggggggBBBbb
   
   int orig_y = y;
 
@@ -435,12 +435,10 @@ void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
 
     *(framebuffer + (plane * plane_size)+planar_offset)   = nu_byte | temp_byte;
     *(framebuffer + (plane * plane_size)+planar_offset+1) = nu_byte | temp_byte | 0x40;
-    r = r >> 1;
-    g = g >> 1;
-    b = b >> 1;
-    //r--;
-    //g--;
-    //b--;
+
+    if (r > 0) r--;
+    if (g > 0) g--;
+    if (b > 0) b--;
   }
 }
 

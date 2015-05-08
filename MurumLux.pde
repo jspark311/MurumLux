@@ -545,9 +545,10 @@ void loop() {
           break;
         case '2':
           blackout();
+          matrix.print("Test text\n");
           break;
         case '3':
-          blackout();
+          matrix.fillScreen(0);
           break;
         case '4':
           generate_random_gol_state();
