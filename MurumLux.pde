@@ -42,179 +42,10 @@ uint32_t    led     = HIGH;
 *       drawPixel().
 * 
 *****************************************************************************************/
-#define    MAX_DEPTH_PER_CHANNEL  1
-#define    PANEL_WIDTH  192
-#define    PANEL_HEIGHT 16   // Actual panel height is twice this, because we pack bits.
-#define    CONTROL_BYTES_PER_ROW 8
 
-
-uint8_t    depth_per_channel = MAX_DEPTH_PER_CHANNEL;
-
-const uint16_t plane_size = PANEL_HEIGHT * (PANEL_WIDTH + CONTROL_BYTES_PER_ROW) * 2;
-const uint16_t tail_length = (PANEL_WIDTH + CONTROL_BYTES_PER_ROW) * 2;
-const uint16_t fb_size    = MAX_DEPTH_PER_CHANNEL * plane_size + tail_length;
-uint8_t        framebuffer[fb_size];
 bool update_frame = true;
 
-RGBmatrixPanel matrix(framebuffer, fb_size, false);
-
-
-void dump_fb_to_console() {
-  StringBuilder temp("Dumping FB to console:\n====================================\n");
-  int i = 0;
-  for (i = 0; i < fb_size; i++) {
-    temp.concatf("%02x ", framebuffer[i]);
-    if (i%32 == 31) {
-      Serial.println((char*) temp.string());
-      temp.clear();
-    }
-  }
-  temp.concatf("\n%d bytes dumped.", i);
-  Serial.println((char*) temp.string());
-}
-
-
-void setPixel(int x, int y, uint16_t color) {
-  if ((x > 63) || (y > 95)) return;
-  
-  // Experimenting with color depth...
-  //uint8_t r = (color >> 11) & 0x1F;   // RRRRRggggggbbbbb
-  //uint8_t g = (color >> 6)  & 0x1F;   // rrrrrGGGGGgbbbbb
-  //uint8_t b = (color)       & 0x1F;   // rrrrrggggggBBBBB
-  uint8_t r = (color >> 14) & 0x03;   // RRRrrggggggbbbbb
-  uint8_t g = (color >> 9)  & 0x03;   // rrrrrGGGgggbbbbb
-  uint8_t b = (color >> 3)  & 0x03;   // rrrrrggggggBBBbb
-  
-  int orig_y = y;
-
-  // The panel is laid out in a 2x3 arrangement (64x96) So first, translate 
-  // the coordinates into the 192x32 display that is reflected by the panel electronics.
-  uint8_t starting_x = 192;
-  y = y % 32;
-  if (orig_y >= 64) {
-    x += 128;
-  }
-  else if (orig_y >= 32) {
-    x += 64;
-  }
-  else {
-  }
-
-  /* Because our panel layout is not a single unit, we need to correct for
-     the offsets to make this function logical to the caller. */
-  // We need to transpose the x-coordinate.
-  if (x < 64) {
-    x += 128;
-  }
-  else if (x >= 128) {
-    x -= 128;
-  }
-
-  // Then, condense the y-coordinate, because we packed two pixels into a single byte.
-  int shift_offset  = (y<16) ? 0 : 3;
-  y = (y<16) ? y : y-16;
-  
-  // Find the byte offset within each plane.
-  uint16_t planar_offset = y * ((PANEL_WIDTH * 2) + CONTROL_BYTES_PER_ROW) + (x*2);
-
-  uint8_t temp_byte = 0;
-  uint8_t nu_byte   = 0;
-  for (int plane = 0; plane < depth_per_channel; plane++) {
-    temp_byte = framebuffer[(plane * plane_size)+planar_offset + CONTROL_BYTES_PER_ROW] & ~(0x07 << shift_offset);
-    nu_byte   = 0;
-    if (r>0) nu_byte = nu_byte + (1 << (shift_offset+0));
-    if (g>0) nu_byte = nu_byte + (1 << (shift_offset+1));
-    if (b>0) nu_byte = nu_byte + (1 << (shift_offset+2));
-
-    framebuffer[(plane * plane_size)+planar_offset + CONTROL_BYTES_PER_ROW] = nu_byte | temp_byte;
-    framebuffer[(plane * plane_size)+planar_offset+1 + CONTROL_BYTES_PER_ROW] = nu_byte | temp_byte | 0x40;
-    r = r >> 1;
-    g = g >> 1;
-    b = b >> 1;
-    //r--;
-    //g--;
-    //b--;
-  }
-}
-
-
-
-
-void init_fb() {
-  uint8_t color = 0;
-
-  // We need to init the framebuffer with our clock signals (since we haven't got any
-  // broken out on the WiFire).
-
-  // Some ASCII art is in order....  
-  // Bit 6 is the shift-register clock, bit 7 is the control signal clock.
-  //
-  //  0  1  2  3  4  5  6   7     <--- PORTE bit 
-  //                   STB CLK
-  // r1 g1 b1 r2 g2 b2            <--- Data pin mapping
-  // A  B  C  D  LA OE            <--- Control signal mapping
-  //
-  // When we write a byte to PORTE that has bit 6 set where it was previously unset, the 
-  //   data on bits 0-5 are clocked into the register that drives the control signals indicated.
-  // When we write a byte to PORTE that has bit 7 set where it was previously unset, the 
-  //   data on bits 0-5 are clocked into the input pins to the shift-registers in the panel.
-  // This is a terrible waste of memory and bandwidth unless you have no usable clock signals
-  //   broken out on your board. :-(  Fortunately, the PIC32MZ has both memory and bandwidth to burn.
-  // There are some practical advantages to this... It means the data stream is inherrently 
-  //   self-synchronizing. It also means that we don't need software machinary in an ISR to move the
-  //   control signals, nor hardware on a board (except the hex D flipflop).
-  //   The net effect is that we only worry about our control signals when we init this render buffer.
-  //   As long as the bits we set for control puposes don't get clobbered by a mistake elsewhere, we
-  //   can simply point DMA at this buffer and let it run forever. From then on, all changes written
-  //   to the render buffer are shown automatically with no further software intervention.
-  //
-  // The render buffer is setup this way:
-  //   C-Frame = "Control frame". Data desined for the panel's control pins (A-D, Strobe, Latch, OE)
-  //   D-Frame = "Data frame".    Data desined for the panel's data pins (r0, r1, g0, g1, b0, b1)
-  //   TAIL    = The tail frame is a row's worth of meaningless data that we write for timing reasons.
-  //
-  // /---------|-----------|---------|-----------|---------|-----------|---------|-----------|------\
-  // | C-Frame | D-Frame 0 | C-Frame | D-Frame 1 | C-Frame | D-Frame 2 | C-Frame | D-Frame 3 | TAIL |
-  // \---------|-----------|---------|-----------|---------|-----------|---------|-----------|------/
-  //
-  // 
-  //
-  int ren_buf_idx = 0;  // This is our accumulated index inside of the render buffer.
-  int total_row_length = (PANEL_WIDTH * 2) + CONTROL_BYTES_PER_ROW;
-  for (int plane = 0; plane < depth_per_channel; plane++) {
-    for (int _cur_row = 0; _cur_row < PANEL_HEIGHT; _cur_row++) {
-      // Build the C-Frame and its clock band.
-      framebuffer[ren_buf_idx++] = _cur_row + 32;
-      framebuffer[ren_buf_idx++] = _cur_row + 128;
-      framebuffer[ren_buf_idx++] = _cur_row + 16 + 32;
-      framebuffer[ren_buf_idx++] = _cur_row + 16 + 32 + 128;
-      framebuffer[ren_buf_idx++] = _cur_row + 32;
-      framebuffer[ren_buf_idx++] = _cur_row + 32 + 128;
-      framebuffer[ren_buf_idx++] = _cur_row;
-      framebuffer[ren_buf_idx++] = _cur_row + 128;
-      
-      for (int k = 0; k < PANEL_WIDTH; k++) {
-        // Zero-out the D-Frame and install the panel clock band...
-        framebuffer[ren_buf_idx++] = 0;
-        framebuffer[ren_buf_idx++] = 64;
-      }
-    }
-  }
-
-  // Here, we are going to set a trailing control sequence to prevent the last-drawn line from being brighter.
-  // Without this (or better ISR....) we will be leaving the last row OE until we start another redraw of the panel.  
-  for (int i = 0; i < PANEL_WIDTH; i++) {
-    framebuffer[ren_buf_idx++] = 0;
-  }
-  framebuffer[ren_buf_idx++] = 32;
-  framebuffer[ren_buf_idx++] = 32 + 128;
-  framebuffer[ren_buf_idx++] = 32;
-  framebuffer[ren_buf_idx++] = 32 + 128;
-  framebuffer[ren_buf_idx++] = 32;
-  framebuffer[ren_buf_idx++] = 32 + 128;
-  framebuffer[ren_buf_idx++] = 32;
-  framebuffer[ren_buf_idx++] = 32 + 128;
-}
+RGBmatrixPanel matrix;
 
 
 
@@ -226,7 +57,7 @@ void blackout() {
 
   for (int a = 0; a < 64; a++) {
     for (int b = 0; b < 96; b++) {
-      setPixel(a, b, 0);
+      matrix.drawPixel(a, b, 0);
     }
   }
 }
@@ -243,19 +74,19 @@ void set_logo(const char* logo) {
 //  while (!matrix.DMADone()) {}
 
   for (int a = 0; a < 96*64; a++) {
-    setPixel(((a)/96), (95-((a)%96)), *((uint16_t*)ptr_cast+a));
+    matrix.drawPixel(((a)/96), (95-((a)%96)), *((uint16_t*)ptr_cast+a));
   }
 }
 
 
 void draw_cursor(int x, int y, uint16_t color) {
-  setPixel(x, y, color);
+  matrix.drawPixel(x, y, color);
   uint8_t i = 0;
   for (uint8_t i = 1; i < 3; i++) {
-    if ((x+i) < 96) setPixel(x+i, y, color);
-    if ((x-i) >= 0) setPixel(x-i, y, color);
-    if ((y+i) < 96) setPixel(x, y+i, color);
-    if ((y-i) >= 0) setPixel(x, y-i, color);
+    if ((x+i) < 96) matrix.drawPixel(x+i, y, color);
+    if ((x-i) >= 0) matrix.drawPixel(x-i, y, color);
+    if ((y+i) < 96) matrix.drawPixel(x, y+i, color);
+    if ((y-i) >= 0) matrix.drawPixel(x, y-i, color);
   }
 }
 
@@ -339,8 +170,7 @@ void advance_plasma() {
         + (int8_t)pgm_read_byte(sinetab + (uint8_t)((x2 * x2 + _y2 * _y2) >> 2))
         + (int8_t)pgm_read_byte(sinetab + (uint8_t)((x3 * x3 + _y3 * _y3) >> 3))
         + (int8_t)pgm_read_byte(sinetab + (uint8_t)((x4 * x4 + _y4 * _y4) >> 3));
-//      matrix.drawPixel(x, y, matrix.ColorHSV(value * 3, 255, 255, true));
-      setPixel(x, y, matrix.ColorHSV(value * 3, 255, 255, true));
+      matrix.drawPixel(x, y, matrix.ColorHSV(value * 3, 255, 255, true));
       x1--; x2--; x3--; x4--;
     }
     _y1--; _y2--; _y3--; _y4--;
@@ -464,10 +294,10 @@ void print(int array[GOL_BOARD_HEIGHT][GOL_BOARD_WIDTH], int bu[GOL_BOARD_HEIGHT
   for(int j = 0; j < GOL_BOARD_HEIGHT; j++) {
     for(int i = 0; i < GOL_BOARD_WIDTH; i++) {
       if(array[j][i] == 1) {
-        setPixel(j, i, (bu[j][i]) ? 0x0FF0 : 0x0617);
+        matrix.drawPixel(j, i, (bu[j][i]) ? 0x0FF0 : 0x0617);
       }
       else {
-        setPixel(j, i, (bu[j][i]) ? 0xC000 : 0);
+        matrix.drawPixel(j, i, (bu[j][i]) ? 0xC000 : 0);
       }
     }
   }
@@ -625,7 +455,7 @@ void setup() {
 
   Serial.begin(115200);
   Serial1.begin(115200);
-  init_fb();
+  matrix.init_fb(0);
   tStart = millis();
 
   pinMode(PIN_LED1, OUTPUT); 
@@ -652,11 +482,14 @@ void loop() {
   
   const char* logo_list[] = {chipkit_logo, microchip_logo, mpide_logo, manuvr_logo};
   
-  uint8_t logo_up = 0;
+  uint8_t logo_up = 3;
 
-  int frame_rate = 30;
-  matrix.RunDMA();
-  
+  int frame_rate = 20;
+
+  set_logo(logo_list[3]);
+  set_logo(logo_list[3]);
+  mode = 5;
+
   while (1) {
     tCur = millis();
     
@@ -666,22 +499,7 @@ void loop() {
       
       switch (c) {
         case 'd':
-          dump_fb_to_console();
-          break;
-        case '-':
-          blackout();
-          if (depth_per_channel > 0) {
-            depth_per_channel--;
-            init_fb();
-          }
-          break;
-          
-        case '+':
-          blackout();
-          if (depth_per_channel < 5) {
-            depth_per_channel++;
-            init_fb();
-          }
+          matrix.dumpMatrix();
           break;
           
         case 'Y': hue_shift_s += 1; break;
@@ -712,12 +530,18 @@ void loop() {
 
 
         case '0':
-          init_fb();
+          matrix.init_fb(0);
+          matrix.init_fb(0);
+          set_logo(logo_list[3]);
+          set_logo(logo_list[3]);
         case 'q':
           mode = 0;
           break;
         case '1':
-          init_fb();
+          matrix.init_fb(1);
+          matrix.init_fb(1);
+          set_logo(logo_list[3]);
+          set_logo(logo_list[3]);
           break;
         case '2':
           blackout();
@@ -733,8 +557,16 @@ void loop() {
         case '6':
           break;
         case '7':
+          matrix.init_fb(2);
+          matrix.init_fb(2);
+          set_logo(logo_list[3]);
+          set_logo(logo_list[3]);
           break;
         case '8':
+          matrix.init_fb(3);
+          matrix.init_fb(3);
+          set_logo(logo_list[3]);
+          set_logo(logo_list[3]);
           break;
         case '9':
           set_logo(logo_list[logo_up % 4]);
@@ -768,7 +600,7 @@ void loop() {
       digitalWrite(PIN_LED1, led);
       switch (mode) {
         case 1:   // Pixel run mode (for debugging things)
-          setPixel(currentx % 64, currentx/64, currentc);
+          matrix.drawPixel(currentx % 64, currentx/64, currentc);
           currentx++;
           if (currentx % 16 == 15) {
             currentc = (uint16_t) random(millis());
@@ -778,7 +610,7 @@ void loop() {
           advance_plasma();
           break;
         case 3:   // Paint mode.
-          setPixel(currentx, currenty, currentc);
+          matrix.drawPixel(currentx, currenty, currentc);
           break;
         case 4:   // GoL
           advance_gol_states();

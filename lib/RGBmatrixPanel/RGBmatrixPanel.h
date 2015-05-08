@@ -28,7 +28,7 @@
     
 class RGBmatrixPanel : public Adafruit_GFX {
   public:
-    RGBmatrixPanel(uint8_t* fb, uint16_t buffsize, boolean dbuf, uint8_t width=192);
+    RGBmatrixPanel();
 
     void begin();
     void drawPixel(int16_t x, int16_t y, uint16_t c);
@@ -38,8 +38,10 @@ class RGBmatrixPanel : public Adafruit_GFX {
     void releasePatternBuffer();
     inline void     RunDMA() {    DCH3CONbits.CHEN = 1;        }
     inline uint32_t DMADone() {   return(!DCH3CONbits.CHEN);   }
-    inline void haltDMA() {       return;  } // DCH3CONbits.CHEN = 0;        }
-    
+    inline void haltDMA() {       DCH3CONbits.CHEN = 0;        }
+  
+    void init_fb(int ctl_style);
+
 
     void swapBuffers(boolean);
     void dumpMatrix(void);
@@ -71,6 +73,7 @@ class RGBmatrixPanel : public Adafruit_GFX {
     uint8_t          nRows;
     volatile uint8_t backindex;
     volatile boolean swapflag;
+    
     
 
   // PORT register pointers, pin bitmasks, pin numbers:

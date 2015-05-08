@@ -35,8 +35,26 @@ BSD license, all text above must be included in any redistribution.
 
 #include "RGBmatrixPanel.h"
 #include "gamma.h"
+#include <StringBuilder.h>
+
 
 #define DMATGTADDR      (&LATE)                 // the DMA target address to write the pattern
+
+#define    MAX_DEPTH_PER_CHANNEL  4
+#define    PANEL_WIDTH  192
+#define    PANEL_HEIGHT 16   // Actual panel height is twice this, because we pack bits.
+#define    CONTROL_BYTES_PER_ROW 6
+
+
+uint8_t    depth_per_channel = MAX_DEPTH_PER_CHANNEL;
+
+const uint16_t plane_size = PANEL_HEIGHT * ((PANEL_WIDTH*2) + CONTROL_BYTES_PER_ROW);
+const uint16_t tail_length = (PANEL_WIDTH*2) + CONTROL_BYTES_PER_ROW;
+const uint16_t fb_size    = MAX_DEPTH_PER_CHANNEL * plane_size + tail_length;
+uint8_t        framebuffer[fb_size];
+
+
+
 
   /*
   * If this actually works with no negative side-effects, it might be better
@@ -57,12 +75,11 @@ BSD license, all text above must be included in any redistribution.
 
 
 // Constructor for 32x32 or 32x64 panel:
-RGBmatrixPanel::RGBmatrixPanel(uint8_t* fb, uint16_t buffsize, boolean dbuf, uint8_t width) :
-  Adafruit_GFX(width, 32) {
+RGBmatrixPanel::RGBmatrixPanel() :
+  Adafruit_GFX(64, 96) {
 
-  matrixbuff[0] = fb;
-  matrixbuff[1] = fb;
-  fb_size = buffsize;
+  matrixbuff[0] = framebuffer;
+  matrixbuff[1] = framebuffer;
   // If not double-buffered, both buffers then point to the same address:
   //matrixbuff[1] = (dbuf) ? &matrixbuff[0][buffsize] : matrixbuff[0];
 
@@ -78,21 +95,21 @@ RGBmatrixPanel::RGBmatrixPanel(uint8_t* fb, uint16_t buffsize, boolean dbuf, uin
     *pLat &= 0x00;
     *pAddr &= 0x00;  // Set all the output pins to zero.
 
-    // set up timer 4 
-    T4CONbits.SIDL      = 0;        // operate in idle mode
-    T4CONbits.TGATE     = 0;        // gated time disabled
-    T4CONbits.TCKPS     = 0b000;    // prescaler of 1:1
-    T4CONbits.T32       = 0;        // 16 bit timer
-    T4CONbits.TCS       = 0;        // use PBClk as source; would set this but the SD does not have this bit
-    TMR4                = 0;        // clear the counter2.5 MHz
-    PR4                 = ((__PIC32_pbClk + (TMRFREQ / 2)) / TMRFREQ);  // clock this at TMRFREQ
+    //// set up timer 4 
+    //T4CONbits.SIDL      = 0;        // operate in idle mode
+    //T4CONbits.TGATE     = 0;        // gated time disabled
+    //T4CONbits.TCKPS     = 0b000;    // prescaler of 1:1
+    //T4CONbits.T32       = 0;        // 16 bit timer
+    //T4CONbits.TCS       = 0;        // use PBClk as source; would set this but the SD does not have this bit
+    //TMR4                = 0;        // clear the counter2.5 MHz
+    //PR4                 = ((__PIC32_pbClk + (TMRFREQ / 2)) / TMRFREQ);  // clock this at TMRFREQ
 
     // someone else may have already turned this on
     DMACONbits.ON       = 1;                        // ensure the DMA controller is ON
 
     // Set up DMA channel 3
     DCH3CONbits.CHAED   = 0;                        // do not allow events to be remembered when disabled
-    DCH3CONbits.CHAEN   = 0;                        // Disallow continuous operation
+    DCH3CONbits.CHAEN   = 1;                        // Disallow continuous operation
     DCH3CONbits.CHPRI   = 0b11;                     // highest priority
 
     DCH3ECON            = 0;                        // clear it
@@ -100,11 +117,27 @@ RGBmatrixPanel::RGBmatrixPanel(uint8_t* fb, uint16_t buffsize, boolean dbuf, uin
     DCH3ECONbits.SIRQEN = 1;                        // enable IRQ transfer enables
     DCH3INT             = 0;                        // do not trigger any events
 
-    DCH3SSA             = KVA_2_PA(fb); // source address of transfer
-    DCH3SSIZ            = buffsize;          // number of bytes in source
+    DCH3SSA             = KVA_2_PA(framebuffer); // source address of transfer
+    DCH3SSIZ            = fb_size;          // number of bytes in source
     DCH3DSA             = KVA_2_PA(DMATGTADDR);     // destination address is RE0 - RE7
     DCH3DSIZ            = 1;           // CBYTESREQUIRED bytes at the destination
-    DCH3CSIZ            = buffsize;           // only transfer CBYTESREQUIRED bytes per event
+    DCH3CSIZ            = fb_size;           // only transfer CBYTESREQUIRED bytes per event
+
+//    // Set up DMA channel 4
+//    DCH4CONbits.CHAED   = 0;                        // do not allow events to be remembered when disabled
+//    DCH4CONbits.CHAEN   = 0;                        // Disallow continuous operation
+//    DCH4CONbits.CHPRI   = 0b11;                     // highest priority
+//
+//    DCH4ECON            = 0;                        // clear it
+//    DCH4ECONbits.CHSIRQ = _DMA3_VECTOR;          // Timer 4 event
+//    DCH4ECONbits.SIRQEN = 1;                        // enable IRQ transfer enables
+//    DCH4INT             = 0;                        // do not trigger any events
+//
+//    DCH4SSA             = KVA_2_PA(fb+(buffsize >> 2)); // source address of transfer
+//    DCH4SSIZ            = buffsize >> 2;          // number of bytes in source
+//    DCH4DSA             = KVA_2_PA(DMATGTADDR);     // destination address is RE0 - RE7
+//    DCH4DSIZ            = 1;           // CBYTESREQUIRED bytes at the destination
+//    DCH4CSIZ            = buffsize >> 2;           // only transfer CBYTESREQUIRED bytes per event
 
   swapflag  = false;
   backindex = 0;     // Array index of back buffer
@@ -117,9 +150,147 @@ void RGBmatrixPanel::begin(void) {
   _fInit = true;
   cli();                // Enable global interrupts
   sei();                // Enable global interrupts
-  T4CONbits.ON        = 1;    // turn on the timer
+  //T4CONbits.ON        = 1;    // turn on the timer
   DCH3CONbits.CHEN   = 1;
 }
+
+
+void RGBmatrixPanel::init_fb(int ctl_style) {
+  // We need to init the framebuffer with our clock signals (since we haven't got any
+  // broken out on the WiFire).
+
+  // Some ASCII art is in order....  
+  // Bit 6 is the shift-register clock, bit 7 is the control signal clock.
+  //
+  //  0  1  2  3  4  5  6   7     <--- PORTE bit 
+  //                   STB CLK
+  // r1 g1 b1 r2 g2 b2            <--- Data pin mapping
+  // A  B  C  D  LA OE            <--- Control signal mapping
+  //
+  // When we write a byte to PORTE that has bit 6 set where it was previously unset, the 
+  //   data on bits 0-5 are clocked into the register that drives the control signals indicated.
+  // When we write a byte to PORTE that has bit 7 set where it was previously unset, the 
+  //   data on bits 0-5 are clocked into the input pins to the shift-registers in the panel.
+  // This is a terrible waste of memory and bandwidth unless you have no usable clock signals
+  //   broken out on your board. :-(  Fortunately, the PIC32MZ has both memory and bandwidth to burn.
+  // There are some practical advantages to this... It means the data stream is inherrently 
+  //   self-synchronizing. It also means that we don't need software machinary in an ISR to move the
+  //   control signals, nor hardware on a board (except the hex D flipflop).
+  //   The net effect is that we only worry about our control signals when we init this render buffer.
+  //   As long as the bits we set for control puposes don't get clobbered by a mistake elsewhere, we
+  //   can simply point DMA at this buffer and let it run forever. From then on, all changes written
+  //   to the render buffer are shown automatically with no further software intervention.
+  //
+  // The render buffer is setup this way:
+  //   C-Frame = "Control frame". Data desined for the panel's control pins (A-D, Strobe, Latch, OE)
+  //   D-Frame = "Data frame".    Data desined for the panel's data pins (r0, r1, g0, g1, b0, b1)
+  //   TAIL    = The tail frame is a row's worth of meaningless data that we write for timing reasons.
+  //
+  // /---------|-----------|---------|-----------|---------|-----------|---------|-----------|------\
+  // | C-Frame | D-Frame 0 | C-Frame | D-Frame 1 | C-Frame | D-Frame 2 | C-Frame | D-Frame 3 | TAIL |
+  // \---------|-----------|---------|-----------|---------|-----------|---------|-----------|------/
+  //
+  // 
+  //
+  int ren_buf_idx = 0;  // This is our accumulated index inside of the render buffer.
+  for (int plane = 0; plane < depth_per_channel; plane++) {
+    
+    
+    
+if (ctl_style == 0) {
+    for (int _cur_row = 0; _cur_row < PANEL_HEIGHT; _cur_row++) {
+      for (int k = 0; k < PANEL_WIDTH; k++) {
+        // Zero-out the D-Frame and install the panel clock band...
+        framebuffer[ren_buf_idx++] = 0;
+        framebuffer[ren_buf_idx++] = 64;
+      }
+      
+      // Build the C-Frame and its clock band.
+      framebuffer[ren_buf_idx++] = _cur_row + 32;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+    }
+}
+
+
+
+else if (ctl_style == 1) {
+    for (int _cur_row = 0; _cur_row < PANEL_HEIGHT; _cur_row++) {
+      for (int k = 0; k < PANEL_WIDTH; k++) {
+        // Zero-out the D-Frame and install the panel clock band...
+        framebuffer[ren_buf_idx++] = 0;
+        framebuffer[ren_buf_idx++] = 64;
+      }
+      
+      // Build the C-Frame and its clock band.
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+    }
+}
+
+
+
+else if (ctl_style == 2) {
+    for (int _cur_row = 0; _cur_row < PANEL_HEIGHT; _cur_row++) {
+      for (int k = 0; k < PANEL_WIDTH; k++) {
+        // Zero-out the D-Frame and install the panel clock band...
+        framebuffer[ren_buf_idx++] = 0;
+        framebuffer[ren_buf_idx++] = 64;
+      }
+      
+      // Build the C-Frame and its clock band.
+      framebuffer[ren_buf_idx++] = _cur_row + 32;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+    }
+}
+
+
+else {
+    for (int _cur_row = 0; _cur_row < PANEL_HEIGHT; _cur_row++) {
+      for (int k = 0; k < PANEL_WIDTH; k++) {
+        // Zero-out the D-Frame and install the panel clock band...
+        framebuffer[ren_buf_idx++] = 0;
+        framebuffer[ren_buf_idx++] = 64;
+      }
+      
+      // Build the C-Frame and its clock band.
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16;
+      framebuffer[ren_buf_idx++] = _cur_row + 32 + 16 + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+      framebuffer[ren_buf_idx++] = _cur_row;
+      framebuffer[ren_buf_idx++] = _cur_row + 128;
+    }
+}
+  }
+  // Here, we are going to set a trailing control sequence to prevent the last-drawn line from being brighter.
+  // Without this (or better ISR....) we will be leaving the last row OE until we start another redraw of the panel.  
+  for (int i = 0; i < PANEL_WIDTH; i++) {
+    framebuffer[ren_buf_idx++] = 0;
+    framebuffer[ren_buf_idx++] = 0;
+  }
+  framebuffer[ren_buf_idx++] = 0;
+  framebuffer[ren_buf_idx++] = 0;
+  framebuffer[ren_buf_idx++] = 0;
+  framebuffer[ren_buf_idx++] = 0;
+  framebuffer[ren_buf_idx++] = 32;
+  framebuffer[ren_buf_idx++] = 32 + 128;
+}
+
+
+
+
 
 // Original RGBmatrixPanel library used 3/3/3 color.  Later version used
 // 4/4/4.  Then Adafruit_GFX (core library used across all Adafruit
@@ -209,78 +380,71 @@ uint16_t RGBmatrixPanel::ColorHSV(
          (b <<  1) | ( b        >> 3);
 }
 
-void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t c) {
-  uint8_t r, g, b, bit, limit, *ptr;
+
+void RGBmatrixPanel::drawPixel(int16_t x, int16_t y, uint16_t color) {
+  if ((x > 63) || (y > 95)) return;
   
-  if((x < 0) || (x >= _width) || (y < 0) || (y >= _height)) return;
+  // Experimenting with color depth...
+  //uint8_t r = (color >> 11) & 0x1F;   // RRRRRggggggbbbbb
+  //uint8_t g = (color >> 6)  & 0x1F;   // rrrrrGGGGGgbbbbb
+  //uint8_t b = (color)       & 0x1F;   // rrrrrggggggBBBBB
+  uint8_t r = (color >> 14) & 0x03;   // RRRrrggggggbbbbb
+  uint8_t g = (color >> 9)  & 0x03;   // rrrrrGGGgggbbbbb
+  uint8_t b = (color >> 3)  & 0x03;   // rrrrrggggggBBBbb
+  
+  int orig_y = y;
 
-  uint8_t panel_number = (x/32);
-
-  switch(rotation) {
-   case 1:
-    swap(x, y);
-    x = WIDTH  - 1 - x;
-    break;
-   case 2:
-    x = WIDTH  - 1 - x;
-    y = HEIGHT - 1 - y;
-    break;
-   case 3:
-    swap(x, y);
-    y = HEIGHT - 1 - y;
-    break;
+  // The panel is laid out in a 2x3 arrangement (64x96) So first, translate 
+  // the coordinates into the 192x32 display that is reflected by the panel electronics.
+  uint8_t starting_x = 192;
+  y = y % 32;
+  if (orig_y >= 64) {
+    x += 128;
+  }
+  else if (orig_y >= 32) {
+    x += 64;
+  }
+  else {
   }
 
-  // Adafruit_GFX uses 16-bit color in 5/6/5 format, while matrix needs
-  // 4/4/4.  Pluck out relevant bits while separating into R,G,B:
-  r =  c >> 12;        // RRRRrggggggbbbbb
-  g = (c >>  7) & 0xF; // rrrrrGGGGggbbbbb
-  b = (c >>  1) & 0xF; // rrrrrggggggBBBBb
+  /* Because our panel layout is not a single unit, we need to correct for
+     the offsets to make this function logical to the caller. */
+  // We need to transpose the x-coordinate.
+  if (x < 64) {
+    x += 128;
+  }
+  else if (x >= 128) {
+    x -= 128;
+  }
 
-  // Loop counter stuff
-  bit   = 2;
-  //limit = 1 << nPlanes;
+  // Then, condense the y-coordinate, because we packed two pixels into a single byte.
+  int shift_offset  = (y<16) ? 0 : 3;
+  y = (y<16) ? y : y-16;
+  
+  // Find the byte offset within each plane.
+  uint16_t planar_offset = (y * (CONTROL_BYTES_PER_ROW + (PANEL_WIDTH * 2))) + (x*2);
 
-  if(y < nRows) {
-    // Data for the upper half of the display is stored in the lower
-    // bits of each byte.
-    //ptr = &matrixbuff[backindex][y * WIDTH * (nPlanes - 1) + x]; // Base addr
+  uint8_t temp_byte = 0;
+  uint8_t nu_byte   = 0;
+  for (int plane = 0; plane < depth_per_channel; plane++) {
+    temp_byte = *(framebuffer + (plane * plane_size)+planar_offset) & ~(0x07 << shift_offset);
+    nu_byte   = 0;
+    if (r>0) nu_byte = nu_byte + (1 << (shift_offset+0));
+    if (g>0) nu_byte = nu_byte + (1 << (shift_offset+1));
+    if (b>0) nu_byte = nu_byte + (1 << (shift_offset+2));
 
-    // Plane 0 is a tricky case -- its data is spread about,
-    // stored in least two bits not used by the other planes.
-    ptr[_width*2] &= ~B00000011;            // Plane 0 R,G mask out in one op
-    if(r & 1) ptr[_width*2] |=  B00000001;  // Plane 0 R: 64 bytes ahead, bit 0
-    if(g & 1) ptr[_width*2] |=  B00000010;  // Plane 0 G: 64 bytes ahead, bit 1
-    if(b & 1) ptr[_width] |=  B00000001;  // Plane 0 B: 32 bytes ahead, bit 0
-    else      ptr[_width] &= ~B00000001;  // Plane 0 B unset; mask out
-    // The remaining three image planes are more normal-ish.
-    // Data is stored in the high 6 bits so it can be quickly
-    // copied to the DATAPORT register w/6 output lines.
-    for(; bit < limit; bit <<= 1) {
-      *ptr &= ~B00011100;             // Mask out R,G,B in one op
-      if(r & bit) *ptr |= B00000100;  // Plane N R: bit 2
-      if(g & bit) *ptr |= B00001000;  // Plane N G: bit 3
-      if(b & bit) *ptr |= B00010000;  // Plane N B: bit 4
-      ptr  += WIDTH;                  // Advance to next bit plane
-    }
-  } else {
-    // Data for the lower half of the display is stored in the upper
-    // bits, except for the plane 0 stuff, using 2 least bits.
-    //ptr = &matrixbuff[backindex][(y - nRows) * WIDTH * (nPlanes - 1) + x];
-    *ptr &= ~B00000011;               // Plane 0 G,B mask out in one op
-    if(r & 1)  ptr[_width] |=  B00000010; // Plane 0 R: 32 bytes ahead, bit 1
-    else       ptr[_width] &= ~B00000010; // Plane 0 R unset; mask out
-    if(g & 1) *ptr     |=  B00000001; // Plane 0 G: bit 0
-    if(b & 1) *ptr     |=  B00000010; // Plane 0 B: bit 0
-    for(; bit < limit; bit <<= 1) {
-      *ptr &= ~B11100000;             // Mask out R,G,B in one op
-      if(r & bit) *ptr |= B00100000;  // Plane N R: bit 5
-      if(g & bit) *ptr |= B01000000;  // Plane N G: bit 6
-      if(b & bit) *ptr |= B10000000;  // Plane N B: bit 7
-      ptr  += WIDTH;                  // Advance to next bit plane
-    }
+    *(framebuffer + (plane * plane_size)+planar_offset)   = nu_byte | temp_byte;
+    *(framebuffer + (plane * plane_size)+planar_offset+1) = nu_byte | temp_byte | 0x40;
+    r = r >> 1;
+    g = g >> 1;
+    b = b >> 1;
+    //r--;
+    //g--;
+    //b--;
   }
 }
+
+
 
 void RGBmatrixPanel::fillScreen(uint16_t c) {
   if((c == 0x0000) || (c == 0xffff)) {
@@ -322,22 +486,17 @@ void RGBmatrixPanel::swapBuffers(boolean copy) {
 // output to change the 'img' name for each.  Data can then be loaded
 // back into the display using a pgm_read_byte() loop.
 void RGBmatrixPanel::dumpMatrix(void) {
-  int i, buffsize = _width * nRows * 3;
-
-  Serial.print("\n\n"
-    "#include <avr/pgmspace.h>\n\n"
-    "static const uint8_t PROGMEM img[] = {\n  ");
-
-  for(i=0; i<buffsize; i++) {
-    Serial.print("0x");
-    if(matrixbuff[backindex][i] < 0x10) Serial.print('0');
-    Serial.print(matrixbuff[backindex][i],HEX);
-    if(i < (buffsize - 1)) {
-      if((i & 7) == 7) Serial.print(",\n  ");
-      else             Serial.print(',');
+  StringBuilder temp("Dumping FB to console:\n====================================\n");
+  int i = 0;
+  for (i = 0; i < fb_size; i++) {
+    temp.concatf("%02x ", framebuffer[i]);
+    if (i%32 == 31) {
+      Serial.println((char*) temp.string());
+      temp.clear();
     }
   }
-  Serial.println("\n};");
+  temp.concatf("\n%d bytes dumped.", i);
+  Serial.println((char*) temp.string());
 }
 
 // -------------------- Interrupt handler stuff --------------------
@@ -372,4 +531,5 @@ void RGBmatrixPanel::updateDisplay() {
   //  LATE = matrixbuff[0][x];
   //}
 }
+
 
